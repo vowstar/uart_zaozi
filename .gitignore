@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025 Huang Rui <vowstar@gmail.com>
+
+# Build outputs
+result/
+*.mlirbc
+
+# Scala/Mill build artifacts
+.scala-build/
+.bsp/
+out/
+.metals/
+.bloop/
+target/
+
+# Cocotb/Simulation outputs
+sim_build/
+*.vcd
+*.fst
+*.fsdb
+*.vvp
+results.xml
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Nix
+.direnv/
+
+# Editor/IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+\#*\#
+.#*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
