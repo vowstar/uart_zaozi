@@ -12,12 +12,11 @@ UART implementation using [zaozi](https://github.com/sequencer/zaozi) EDSL.
 ## Prerequisites
 
 - [Nix](https://nixos.org/download.html) with flakes enabled
-- Clone [zaozi](https://github.com/sequencer/zaozi) to `../zaozi`
 
 ## Usage
 
 ```bash
-# Enter development shell (auto-builds zaozi if needed)
+# Enter development shell
 nix develop
 
 # Generate Verilog
@@ -29,16 +28,16 @@ cd test/test_uart && make
 
 ## Project Structure
 
-```bash
+```
 uart_zaozi/
 ├── uart/src/
-│   ├── Uart.scala         # UART module (TX + RX)
+│   ├── Uart.scala          # UART module (TX + RX)
 │   └── UartParameter.scala # Configuration parameters
 ├── test/test_uart/
-│   ├── test_uart.py       # cocotb testbench
-│   └── test_uart.v        # Verilog wrapper
-├── result/                # Generated Verilog (after build)
-└── flake.nix              # Nix build configuration
+│   ├── test_uart.py        # cocotb testbench
+│   └── test_uart.v         # Verilog wrapper
+├── result/                 # Generated Verilog (after build)
+└── flake.nix               # Nix build configuration
 ```
 
 ## Configuration
