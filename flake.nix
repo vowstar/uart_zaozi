@@ -72,20 +72,23 @@
           echo "=== MLIR bytecode generated ==="
 
           # Convert MLIR to Verilog
-          MLIRBC_FILE=$(ls UartModule*.mlirbc 2>/dev/null | head -1)
+          MLIRBC_FILE=$(ls Uart*.mlirbc 2>/dev/null | head -1)
 
           if [ -z "$MLIRBC_FILE" ]; then
             echo "Error: No .mlirbc file generated"
             exit 1
           fi
 
-          ${pkgs.circt-install}/bin/firtool "$MLIRBC_FILE" --verilog \
-            --lowering-options=disallowLocalVariables,disallowPackedArrays \
-            -o "$OUTPUT_DIR/Uart.v"
+          ${pkgs.circt-install}/bin/firtool "$MLIRBC_FILE" --split-verilog \
+            -g \
+            --emit-hgldd \
+            --hgldd-output-dir="$OUTPUT_DIR" \
+            --lowering-options=noAlwaysComb,disallowLocalVariables,disallowPackedArrays,emittedLineLength=160,verifLabels,explicitBitcast,locationInfoStyle=wrapInAtSquareBracket,wireSpillingHeuristic=spillLargeTermsWithNamehints,disallowMuxInlining,wireSpillingNamehintTermLimit=8,maximumNumberOfTermsPerExpression=8,disallowExpressionInliningInPorts,caseInsensitiveKeywords \
+            -o "$OUTPUT_DIR"
 
           rm -f *.mlirbc
 
-          echo "=== Verilog generated: $OUTPUT_DIR/Uart.v ==="
+          echo "=== Verilog generated in: $OUTPUT_DIR ==="
           echo "=== Build complete ==="
         '';
 
@@ -131,10 +134,13 @@
             Uart.scala \
             -- design "$out/uart_config.json"
 
-          MLIRBC_FILE=$(ls UartModule*.mlirbc 2>/dev/null | head -1)
-          ${pkgs.circt-install}/bin/firtool "$MLIRBC_FILE" --verilog \
-            --lowering-options=disallowLocalVariables,disallowPackedArrays \
-            -o "$out/Uart.v"
+          MLIRBC_FILE=$(ls Uart*.mlirbc 2>/dev/null | head -1)
+          ${pkgs.circt-install}/bin/firtool "$MLIRBC_FILE" --split-verilog \
+            -g \
+            --emit-hgldd \
+            --hgldd-output-dir="$out" \
+            --lowering-options=noAlwaysComb,disallowLocalVariables,disallowPackedArrays,emittedLineLength=160,verifLabels,explicitBitcast,locationInfoStyle=wrapInAtSquareBracket,wireSpillingHeuristic=spillLargeTermsWithNamehints,disallowMuxInlining,wireSpillingNamehintTermLimit=8,maximumNumberOfTermsPerExpression=8,disallowExpressionInliningInPorts,caseInsensitiveKeywords \
+            -o "$out"
         '';
 
         # App for interactive build

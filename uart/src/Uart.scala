@@ -15,17 +15,12 @@ class UartLayers(parameter: UartParameter) extends LayerInterface(parameter):
 
 // Combined UART IO (TX + RX)
 class UartIO(parameter: UartParameter) extends HWBundle(parameter):
-  // Clock and reset (active-high reset)
   val clock = Flipped(Clock())
   val reset = Flipped(Reset())
-
-  // TX interface
   val uart_txd     = Aligned(Bool())
   val uart_tx_busy = Aligned(Bool())
   val uart_tx_en   = Flipped(Bool())
   val uart_tx_data = Flipped(UInt(parameter.payloadBits.W))
-
-  // RX interface
   val uart_rxd      = Flipped(Bool())
   val uart_rx_en    = Flipped(Bool())
   val uart_rx_break = Aligned(Bool())
@@ -36,14 +31,13 @@ class UartIO(parameter: UartParameter) extends HWBundle(parameter):
 class UartProbe(parameter: UartParameter)
     extends DVBundle[UartParameter, UartLayers](parameter)
 
-// FSM states for TX
+// FSM states
 object UartTxState:
   val IDLE:  Int = 0
   val START: Int = 1
   val SEND:  Int = 2
   val STOP:  Int = 3
 
-// FSM states for RX
 object UartRxState:
   val IDLE:  Int = 0
   val START: Int = 1
@@ -53,79 +47,102 @@ object UartRxState:
 @generator
 object UartModule extends Generator[UartParameter, UartLayers, UartIO, UartProbe]:
 
+  override def moduleName(parameter: UartParameter): String = "Uart"
+
   def architecture(parameter: UartParameter) =
     val io = summon[Interface[UartIO]]
 
     given Ref[Clock] = io.clock
     given Ref[Reset] = io.reset
 
-    val cyclesPerBit = parameter.cyclesPerBit
-    val payloadBits  = parameter.payloadBits
-    val stopBits     = parameter.stopBits
-    val countRegLen  = parameter.countRegLen
+    val cyclesPerBit     = parameter.cyclesPerBit
+    val halfCyclesPerBit = cyclesPerBit / 2
+    val payloadBits      = parameter.payloadBits
+    val stopBits         = parameter.stopBits
+    val countRegLen      = parameter.countRegLen
 
     // ========== TX Logic ==========
-    val txdReg       = RegInit(true.B)
-    val dataToSend   = RegInit(0.U(payloadBits.W))
+    val txdReg         = RegInit(true.B)
+    val dataToSend     = RegInit(0.U(payloadBits.W))
     val txCycleCounter = RegInit(0.U(countRegLen.W))
-    val txBitCounter = RegInit(0.U(4.W))
-    val txFsmState   = RegInit(UartTxState.IDLE.U(2.W))
+    val txBitCounter   = RegInit(0.U(4.W))
+    val txFsmState     = RegInit(UartTxState.IDLE.U(2.W))
 
+    // TX state decode
+    val txStateIdle  = Wire(Bool())
+    val txStateStart = Wire(Bool())
+    val txStateSend  = Wire(Bool())
+    val txStateStop  = Wire(Bool())
+    txStateIdle  := txFsmState === UartTxState.IDLE.U(2.W)
+    txStateStart := txFsmState === UartTxState.START.U(2.W)
+    txStateSend  := txFsmState === UartTxState.SEND.U(2.W)
+    txStateStop  := txFsmState === UartTxState.STOP.U(2.W)
+
+    // TX control signals
+    val txNextBit       = Wire(Bool())
+    val txPayloadDone   = Wire(Bool())
+    val txStopDone      = Wire(Bool())
+    val txActive        = Wire(Bool())
+    val txSendNextBit   = Wire(Bool())
+    val txBitCounterInc = Wire(UInt(4.W))
+    val txCycleCounterInc = Wire(UInt(countRegLen.W))
+
+    txNextBit       := txCycleCounter === cyclesPerBit.U(countRegLen.W)
+    txPayloadDone   := txBitCounter === payloadBits.U(4.W)
+    txStopDone      := txStateStop & (txBitCounter === stopBits.U(4.W))
+    txActive        := txStateStart | txStateSend | txStateStop
+    txSendNextBit   := txStateSend & txNextBit
+    txBitCounterInc := (txBitCounter + 1.U(4.W)).asBits.bits(3, 0).asUInt
+
+    // Derived control signals
+    val txSendShift = Wire(Bool())
+    txSendShift := txSendNextBit & !txPayloadDone
+    txCycleCounterInc := (txCycleCounter + 1.U(countRegLen.W)).asBits.bits(countRegLen - 1, 0).asUInt
+
+    // TX outputs
     io.uart_txd     := txdReg
-    io.uart_tx_busy := txFsmState =/= UartTxState.IDLE.U(2.W)
-
-    val txNextBit     = txCycleCounter === cyclesPerBit.U(countRegLen.W)
-    val txPayloadDone = txBitCounter === payloadBits.U(4.W)
-    val txStopDone    = (txBitCounter === stopBits.U(4.W)) & (txFsmState === UartTxState.STOP.U(2.W))
+    io.uart_tx_busy := !txStateIdle
 
     // TX FSM
-    when(txFsmState === UartTxState.IDLE.U(2.W)) {
+    when(txStateIdle) {
       when(io.uart_tx_en) {
         txFsmState := UartTxState.START.U(2.W)
       }
     }.otherwise {
-      when(txFsmState === UartTxState.START.U(2.W)) {
-        when(txNextBit) {
-          txFsmState := UartTxState.SEND.U(2.W)
-        }
+      when(txStateStart & txNextBit) {
+        txFsmState := UartTxState.SEND.U(2.W)
       }.otherwise {
-        when(txFsmState === UartTxState.SEND.U(2.W)) {
-          when(txPayloadDone) {
-            txFsmState := UartTxState.STOP.U(2.W)
-          }
+        when(txStateSend & txPayloadDone) {
+          txFsmState := UartTxState.STOP.U(2.W)
         }.otherwise {
-          when(txFsmState === UartTxState.STOP.U(2.W)) {
-            when(txStopDone) {
-              txFsmState := UartTxState.IDLE.U(2.W)
-            }
+          when(txStopDone) {
+            txFsmState := UartTxState.IDLE.U(2.W)
           }
         }
       }
     }
 
     // TX data register
-    when(txFsmState === UartTxState.IDLE.U(2.W)) {
-      when(io.uart_tx_en) {
-        dataToSend := io.uart_tx_data
-      }
+    when(txStateIdle & io.uart_tx_en) {
+      dataToSend := io.uart_tx_data
     }.otherwise {
-      when((txFsmState === UartTxState.SEND.U(2.W)) & txNextBit) {
+      when(txSendNextBit) {
         dataToSend := dataToSend >> 1
       }
     }
 
     // TX bit counter
-    when((txFsmState === UartTxState.IDLE.U(2.W)) | (txFsmState === UartTxState.START.U(2.W))) {
+    when(txStateIdle | txStateStart) {
       txBitCounter := 0.U(4.W)
     }.otherwise {
-      when((txFsmState === UartTxState.SEND.U(2.W)) & txNextBit & !txPayloadDone) {
-        txBitCounter := (txBitCounter + 1.U(4.W)).asBits.bits(3, 0).asUInt
+      when(txSendShift) {
+        txBitCounter := txBitCounterInc
       }.otherwise {
-        when((txFsmState === UartTxState.SEND.U(2.W)) & txPayloadDone) {
+        when(txStateSend & txPayloadDone) {
           txBitCounter := 0.U(4.W)
         }.otherwise {
-          when((txFsmState === UartTxState.STOP.U(2.W)) & txNextBit) {
-            txBitCounter := (txBitCounter + 1.U(4.W)).asBits.bits(3, 0).asUInt
+          when(txStateStop & txNextBit) {
+            txBitCounter := txBitCounterInc
           }
         }
       }
@@ -135,24 +152,22 @@ object UartModule extends Generator[UartParameter, UartLayers, UartIO, UartProbe
     when(txNextBit) {
       txCycleCounter := 0.U(countRegLen.W)
     }.otherwise {
-      when((txFsmState === UartTxState.START.U(2.W)) |
-           (txFsmState === UartTxState.SEND.U(2.W)) |
-           (txFsmState === UartTxState.STOP.U(2.W))) {
-        txCycleCounter := (txCycleCounter + 1.U(countRegLen.W)).asBits.bits(countRegLen - 1, 0).asUInt
+      when(txActive) {
+        txCycleCounter := txCycleCounterInc
       }
     }
 
-    // TX output
-    when(txFsmState === UartTxState.IDLE.U(2.W)) {
+    // TX output register
+    when(txStateIdle) {
       txdReg := true.B
     }.otherwise {
-      when(txFsmState === UartTxState.START.U(2.W)) {
+      when(txStateStart) {
         txdReg := false.B
       }.otherwise {
-        when(txFsmState === UartTxState.SEND.U(2.W)) {
+        when(txStateSend) {
           txdReg := dataToSend.asBits.bit(0)
         }.otherwise {
-          when(txFsmState === UartTxState.STOP.U(2.W)) {
+          when(txStateStop) {
             txdReg := true.B
           }
         }
@@ -160,16 +175,50 @@ object UartModule extends Generator[UartParameter, UartLayers, UartIO, UartProbe
     }
 
     // ========== RX Logic ==========
-    val rxdReg0      = RegInit(true.B)
-    val rxdReg       = RegInit(true.B)
-    val receivedData = RegInit(0.U(payloadBits.W))
-    val uartRxData   = RegInit(0.U(payloadBits.W))
+    val rxdReg0        = RegInit(true.B)
+    val rxdReg         = RegInit(true.B)
+    val receivedData   = RegInit(0.U(payloadBits.W))
+    val uartRxData     = RegInit(0.U(payloadBits.W))
     val rxCycleCounter = RegInit(0.U(countRegLen.W))
-    val rxBitCounter = RegInit(0.U(4.W))
-    val bitSample    = RegInit(false.B)
-    val rxFsmState   = RegInit(UartRxState.IDLE.U(2.W))
-    val rxNFsmState  = Wire(UInt(2.W))
-    val rxValidReg   = RegInit(false.B)
+    val rxBitCounter   = RegInit(0.U(4.W))
+    val bitSample      = RegInit(false.B)
+    val rxFsmState     = RegInit(UartRxState.IDLE.U(2.W))
+    val rxNFsmState    = Wire(UInt(2.W))
+    val rxValidReg     = RegInit(false.B)
+
+    // RX state decode
+    val rxStateIdle  = Wire(Bool())
+    val rxStateStart = Wire(Bool())
+    val rxStateRecv  = Wire(Bool())
+    val rxStateStop  = Wire(Bool())
+    rxStateIdle  := rxFsmState === UartRxState.IDLE.U(2.W)
+    rxStateStart := rxFsmState === UartRxState.START.U(2.W)
+    rxStateRecv  := rxFsmState === UartRxState.RECV.U(2.W)
+    rxStateStop  := rxFsmState === UartRxState.STOP.U(2.W)
+
+    // RX control signals
+    val rxHalfBit       = Wire(Bool())
+    val rxFullBit       = Wire(Bool())
+    val rxNextBit       = Wire(Bool())
+    val rxPayloadDone   = Wire(Bool())
+    val rxActive        = Wire(Bool())
+    val rxStartEdge     = Wire(Bool())
+    val rxRecvNextBit   = Wire(Bool())
+    val rxDone          = Wire(Bool())
+    val rxShiftedData   = Wire(UInt(payloadBits.W))
+    val rxBitCounterInc = Wire(UInt(4.W))
+    val rxCycleCounterInc = Wire(UInt(countRegLen.W))
+
+    rxHalfBit       := rxCycleCounter === halfCyclesPerBit.U(countRegLen.W)
+    rxFullBit       := rxCycleCounter === cyclesPerBit.U(countRegLen.W)
+    rxNextBit       := rxFullBit | (rxStateStop & rxHalfBit)
+    rxPayloadDone   := rxBitCounter === payloadBits.U(4.W)
+    rxActive        := rxStateStart | rxStateRecv | rxStateStop
+    rxStartEdge     := rxStateIdle & !rxdReg
+    rxRecvNextBit   := rxStateRecv & rxNextBit
+    rxShiftedData   := (bitSample.asBits ## receivedData.asBits.bits(payloadBits - 1, 1)).asUInt
+    rxBitCounterInc := (rxBitCounter + 1.U(4.W)).asBits.bits(3, 0).asUInt
+    rxCycleCounterInc := (rxCycleCounter + 1.U(countRegLen.W)).asBits.bits(countRegLen - 1, 0).asUInt
 
     // Input sync
     when(io.uart_rx_en) {
@@ -177,24 +226,18 @@ object UartModule extends Generator[UartParameter, UartLayers, UartIO, UartProbe
       rxdReg  := rxdReg0
     }
 
-    // next_bit: full bit period, except STOP state exits at half bit
-    val rxNextBit = (rxCycleCounter === cyclesPerBit.U(countRegLen.W)) |
-                    ((rxFsmState === UartRxState.STOP.U(2.W)) &
-                     (rxCycleCounter === (cyclesPerBit / 2).U(countRegLen.W)))
-    val rxPayloadDone = rxBitCounter === payloadBits.U(4.W)
-
-    // RX next state (matches uart_ref logic)
+    // RX FSM next state
     rxNFsmState := rxFsmState
-    when(rxFsmState === UartRxState.IDLE.U(2.W)) {
-      rxNFsmState := (!rxdReg).?(UartRxState.START.U(2.W), UartRxState.IDLE.U(2.W))
+    when(rxStateIdle) {
+      rxNFsmState := rxStartEdge.?(UartRxState.START.U(2.W), UartRxState.IDLE.U(2.W))
     }.otherwise {
-      when(rxFsmState === UartRxState.START.U(2.W)) {
+      when(rxStateStart) {
         rxNFsmState := rxNextBit.?(UartRxState.RECV.U(2.W), UartRxState.START.U(2.W))
       }.otherwise {
-        when(rxFsmState === UartRxState.RECV.U(2.W)) {
+        when(rxStateRecv) {
           rxNFsmState := rxPayloadDone.?(UartRxState.STOP.U(2.W), UartRxState.RECV.U(2.W))
         }.otherwise {
-          when(rxFsmState === UartRxState.STOP.U(2.W)) {
+          when(rxStateStop) {
             rxNFsmState := rxNextBit.?(UartRxState.IDLE.U(2.W), UartRxState.STOP.U(2.W))
           }
         }
@@ -203,49 +246,47 @@ object UartModule extends Generator[UartParameter, UartLayers, UartIO, UartProbe
 
     rxFsmState := rxNFsmState
 
-    // RX valid: register the transition so cocotb can see it after clock edge
-    // Valid pulses for one cycle when transitioning from STOP to IDLE
-    rxValidReg := (rxFsmState === UartRxState.STOP.U(2.W)) & (rxNFsmState === UartRxState.IDLE.U(2.W))
+    // RX valid pulse
+    rxDone := rxStateStop & (rxNFsmState === UartRxState.IDLE.U(2.W))
+    rxValidReg := rxDone
 
     // RX outputs
     io.uart_rx_valid := rxValidReg
     io.uart_rx_break := rxValidReg & (uartRxData === 0.U(payloadBits.W))
     io.uart_rx_data  := uartRxData
 
-    when(rxFsmState === UartRxState.STOP.U(2.W)) {
+    when(rxStateStop) {
       uartRxData := receivedData
     }
 
-    // RX data shift (matches uart_ref: shift when next_bit in RECV state)
-    when(rxFsmState === UartRxState.IDLE.U(2.W)) {
+    // RX data shift
+    when(rxStateIdle) {
       receivedData := 0.U(payloadBits.W)
     }.otherwise {
-      when((rxFsmState === UartRxState.RECV.U(2.W)) & rxNextBit) {
-        receivedData := (bitSample.asBits ## receivedData.asBits.bits(payloadBits - 1, 1)).asUInt
+      when(rxRecvNextBit) {
+        receivedData := rxShiftedData
       }
     }
 
     // RX bit counter
-    when(rxFsmState =/= UartRxState.RECV.U(2.W)) {
+    when(!rxStateRecv) {
       rxBitCounter := 0.U(4.W)
     }.otherwise {
-      when((rxFsmState === UartRxState.RECV.U(2.W)) & rxNextBit) {
-        rxBitCounter := (rxBitCounter + 1.U(4.W)).asBits.bits(3, 0).asUInt
+      when(rxRecvNextBit) {
+        rxBitCounter := rxBitCounterInc
       }
     }
 
-    // RX bit sample
-    when(rxCycleCounter === (cyclesPerBit / 2).U(countRegLen.W)) {
+    // RX bit sample at mid-bit
+    when(rxHalfBit) {
       bitSample := rxdReg
     }
 
-    // RX cycle counter (matches uart_ref: reset on next_bit)
+    // RX cycle counter
     when(rxNextBit) {
       rxCycleCounter := 0.U(countRegLen.W)
     }.otherwise {
-      when((rxFsmState === UartRxState.START.U(2.W)) |
-           (rxFsmState === UartRxState.RECV.U(2.W)) |
-           (rxFsmState === UartRxState.STOP.U(2.W))) {
-        rxCycleCounter := (rxCycleCounter + 1.U(countRegLen.W)).asBits.bits(countRegLen - 1, 0).asUInt
+      when(rxActive) {
+        rxCycleCounter := rxCycleCounterInc
       }
     }

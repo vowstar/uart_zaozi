@@ -25,7 +25,7 @@ module test_uart (
 );
 
 // Instantiate the zaozi-generated UART module
-UartModule_e0f01525 u_uart (
+Uart u_uart (
     .clock        (clk),
     .reset        (reset),
     .uart_txd     (uart_txd),
