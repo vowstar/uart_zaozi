@@ -15,6 +15,13 @@ VERILOG_DIR = $(DUT_DIR)/../../result
 # RTL sources
 VERILOG_SOURCES = $(VERILOG_TEST_SOURCES)
 VERILOG_SOURCES += $(wildcard $(VERILOG_DIR)/*.v)
+VERILOG_SOURCES += $(wildcard $(VERILOG_DIR)/*.sv)
+
+ifeq ($(SIM), vcs)
+ifeq ($(WAVES), 1)
+COMPILE_ARGS += -kdb=common_elab,hgldd_all,hglelab
+endif
+endif
 
 # Python path for cocotbext modules
 PYTHONPATH := $(DUT_DIR)/../:$(PYTHONPATH)
