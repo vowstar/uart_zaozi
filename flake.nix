@@ -80,6 +80,7 @@
           fi
 
           ${pkgs.circt-install}/bin/firtool "$MLIRBC_FILE" --split-verilog \
+            -disable-all-randomization \
             -g \
             --emit-hgldd \
             --hgldd-output-dir="$OUTPUT_DIR" \
@@ -136,6 +137,7 @@
 
           MLIRBC_FILE=$(ls Uart*.mlirbc 2>/dev/null | head -1)
           ${pkgs.circt-install}/bin/firtool "$MLIRBC_FILE" --split-verilog \
+            -disable-all-randomization \
             -g \
             --emit-hgldd \
             --hgldd-output-dir="$out" \
